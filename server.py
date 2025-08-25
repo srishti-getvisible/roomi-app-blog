@@ -54,6 +54,8 @@ ASSET_PREFIXES = (
 	"feed",
 )
 
+STATIC_PAGES = ("faq", "about", "press")
+
 
 class BlogRequestHandler(http.server.SimpleHTTPRequestHandler):
 	def translate_path(self, path: str) -> str:
@@ -108,6 +110,16 @@ class BlogRequestHandler(http.server.SimpleHTTPRequestHandler):
 			page = m_root_num_dir.group(1)
 			return self._redirect_permanent("/blog" if page == "1" else f"/blog/{page}")
 
+		# 0b) Static pages: /faq, /about, /press -> serve blog/<page>/index.html
+		for page in STATIC_PAGES:
+			if clean_path == f"/{page}":
+				candidate = os.path.join(BLOG_ROOT, page, "index.html")
+				if os.path.isfile(candidate):
+					return self._serve_absolute(candidate)
+				return self._send_404()
+			if clean_path == f"/{page}/index.html" or clean_path == f"/{page}/":
+				return self._redirect_permanent(f"/{page}")
+
 		# 1) Main blog page: /blog -> serve blog/index.html
 		if clean_path == "/blog":
 			return self._serve_absolute(os.path.join(BLOG_ROOT, "index.html"))
@@ -152,14 +164,14 @@ class BlogRequestHandler(http.server.SimpleHTTPRequestHandler):
 				return self._serve_absolute(abs_index)
 			return self._send_404()
 
-		# 3) Deep blog URLs ending with /index.html -> redirect to /blog/<slug>
-		m_deep_idx = re.fullmatch(r"/blog/.*/([^/]+)/index\.html", clean_path)
+		# 3) Redirect /blog/(.../)?<slug>/index.html -> /blog/<slug>
+		m_deep_idx = re.fullmatch(r"/blog/(?:.*/)?([^/]+)/index\.html", clean_path)
 		if m_deep_idx:
 			slug = m_deep_idx.group(1)
 			return self._redirect_permanent(f"/blog/{slug}")
 
-		# 4) Deep blog directories ending with / -> if there is an index.html, redirect
-		m_deep_dir = re.fullmatch(r"/blog/.*/([^/]+)/", clean_path)
+		# 4) Redirect /blog/(.../)?<slug>/ -> /blog/<slug> when the slug exists
+		m_deep_dir = re.fullmatch(r"/blog/(?:.*/)?([^/]+)/", clean_path)
 		if m_deep_dir:
 			slug = m_deep_dir.group(1)
 			candidate = SLUG_MAP.get(slug)
