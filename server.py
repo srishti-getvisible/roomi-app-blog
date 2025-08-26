@@ -12,26 +12,39 @@ WORKSPACE_DIR = os.path.abspath(os.path.dirname(__file__))
 BLOG_ROOT = os.path.join(WORKSPACE_DIR, "blog")
 
 
-def build_slug_to_path_map() -> Dict[str, str]:
-	"""Scan the blog tree for index.html files and map slug -> absolute path.
+class SlugMeta:
+	def __init__(self, slug: str, abs_index_path: str, language: Optional[str], category: Optional[str]):
+		self.slug = slug
+		self.abs_index_path = abs_index_path
+		self.language = language
+		self.category = category
 
-	Slug is the immediate parent directory name of an index.html.
-	If duplicates exist, the first encountered wins.
+
+def build_slug_meta_map() -> Dict[str, 'SlugMeta']:
+	"""Scan the blog tree for index.html files and map slug -> metadata.
+
+	Expected preferred structure: blog/<language>/<category>/<slug>/index.html
+	Falls back gracefully if structure differs.
 	"""
-	slug_to_path: Dict[str, str] = {}
+	slug_to_meta: Dict[str, SlugMeta] = {}
 	for current_dir, _subdirs, files in os.walk(BLOG_ROOT):
-		if "index.html" in files:
-			parent_dir_name = os.path.basename(current_dir.rstrip(os.sep))
-			abs_index_path = os.path.join(current_dir, "index.html")
-			if parent_dir_name not in slug_to_path:
-				slug_to_path[parent_dir_name] = abs_index_path
-			else:
-				print(f"[warn] Duplicate slug '{parent_dir_name}' -> {abs_index_path} (already mapped to {slug_to_path[parent_dir_name]})")
-	return slug_to_path
+		if "index.html" not in files:
+			continue
+		abs_index_path = os.path.join(current_dir, "index.html")
+		rel_dir = os.path.relpath(current_dir, BLOG_ROOT)
+		parts = [p for p in rel_dir.split(os.sep) if p]
+		slug = parts[-1] if parts else os.path.basename(current_dir.rstrip(os.sep))
+		language = parts[0] if len(parts) >= 3 else None
+		category = parts[1] if len(parts) >= 3 else None
+		if slug not in slug_to_meta:
+			slug_to_meta[slug] = SlugMeta(slug, abs_index_path, language, category)
+		else:
+			print(f"[warn] Duplicate slug '{slug}' -> {abs_index_path} (already mapped to {slug_to_meta[slug].abs_index_path})")
+	return slug_to_meta
 
 
-SLUG_MAP = build_slug_to_path_map()
-print(f"[info] Loaded {len(SLUG_MAP)} blog slugs")
+SLUG_META = build_slug_meta_map()
+print(f"[info] Loaded {len(SLUG_META)} blog slugs")
 
 
 SECTION_PREFIXES = (
@@ -45,6 +58,8 @@ SECTION_PREFIXES = (
 	"our-founder",
 	"press",
 )
+
+LANG_CODES = ("us", "mexico", "latam")
 
 ASSET_PREFIXES = (
 	"wp-content",
@@ -120,9 +135,63 @@ class BlogRequestHandler(http.server.SimpleHTTPRequestHandler):
 			if clean_path == f"/{page}/index.html" or clean_path == f"/{page}/":
 				return self._redirect_permanent(f"/{page}")
 
+		# Enforce no trailing slash for main blog page
+		if clean_path == "/blog/":
+			return self._redirect_permanent("/blog")
+
+		# Redirect /blog/index.html (used by Categories button) to /blog/us
+		if clean_path == "/blog/index.html":
+			return self._redirect_permanent("/blog/us")
+
 		# 1) Main blog page: /blog -> serve blog/index.html
 		if clean_path == "/blog":
 			return self._serve_absolute(os.path.join(BLOG_ROOT, "index.html"))
+
+		# 1a) Language listing: /blog/<lang>
+		m_lang = re.fullmatch(r"/blog/(us|mexico|latam)", clean_path)
+		if m_lang:
+			lang = m_lang.group(1)
+			candidate = os.path.join(BLOG_ROOT, lang, "index.html")
+			if os.path.isfile(candidate):
+				return self._serve_absolute(candidate)
+			return self._send_404()
+
+		# 1a.x) If path is /blog/<lang>/<name> and <name> is actually a post slug, redirect to canonical
+		m_lang_name_idx = re.fullmatch(r"/blog/(us|mexico|latam)/([^/]+)/index\.html", clean_path)
+		if m_lang_name_idx:
+			lang, name = m_lang_name_idx.group(1), m_lang_name_idx.group(2)
+			meta = SLUG_META.get(name)
+			if meta and os.path.isfile(meta.abs_index_path):
+				return self._redirect_permanent(self._canonical_slug_url(meta))
+		m_lang_name_dir = re.fullmatch(r"/blog/(us|mexico|latam)/([^/]+)/", clean_path)
+		if m_lang_name_dir:
+			lang, name = m_lang_name_dir.group(1), m_lang_name_dir.group(2)
+			meta = SLUG_META.get(name)
+			if meta and os.path.isfile(meta.abs_index_path):
+				return self._redirect_permanent(self._canonical_slug_url(meta))
+
+		# 1a.1) Category listing: /blog/<lang>/<category>
+		m_lang_cat = re.fullmatch(r"/blog/(us|mexico|latam)/([^/]+)", clean_path)
+		if m_lang_cat:
+			lang, category = m_lang_cat.group(1), m_lang_cat.group(2)
+			candidate = os.path.join(BLOG_ROOT, lang, category, "index.html")
+			if os.path.isfile(candidate):
+				return self._serve_absolute(candidate)
+			# If not category, let deeper rules handle as post
+
+		# 1a.y) Common WordPress related posts format: /blog/<category>/<slug>[/index.html]
+		m_cat_slug_idx = re.fullmatch(r"/blog/([^/]+)/([^/]+)/index\.html", clean_path)
+		if m_cat_slug_idx:
+			category, slug = m_cat_slug_idx.group(1), m_cat_slug_idx.group(2)
+			meta = SLUG_META.get(slug)
+			if meta and os.path.isfile(meta.abs_index_path):
+				return self._redirect_permanent(self._canonical_slug_url(meta))
+		m_cat_slug_dir = re.fullmatch(r"/blog/([^/]+)/([^/]+)/", clean_path)
+		if m_cat_slug_dir:
+			category, slug = m_cat_slug_dir.group(1), m_cat_slug_dir.group(2)
+			meta = SLUG_META.get(slug)
+			if meta and os.path.isfile(meta.abs_index_path):
+				return self._redirect_permanent(self._canonical_slug_url(meta))
 
 		# 1b) Pagination: /blog/<n> -> serve blog/page/<n>/index.html (n=1 -> /blog)
 		m_page = re.fullmatch(r"/blog/([0-9]+)", clean_path)
@@ -145,65 +214,96 @@ class BlogRequestHandler(http.server.SimpleHTTPRequestHandler):
 			pg = m_page_old_dir.group(1)
 			return self._redirect_permanent("/blog" if pg == "1" else f"/blog/{pg}")
 
-		# Also redirect legacy /page/<n> under root to /blog/<n> (or /blog for 1)
-		m_legacy_root_page_idx = re.fullmatch(r"/page/([0-9]+)/index\.html", clean_path)
-		if m_legacy_root_page_idx:
-			pg = m_legacy_root_page_idx.group(1)
-			return self._redirect_permanent("/blog" if pg == "1" else f"/blog/{pg}")
-		m_legacy_root_page_dir = re.fullmatch(r"/page/([0-9]+)/?", clean_path)
-		if m_legacy_root_page_dir:
-			pg = m_legacy_root_page_dir.group(1)
-			return self._redirect_permanent("/blog" if pg == "1" else f"/blog/{pg}")
+		# Legacy: redirect /<lang>[/index.html] -> /blog/<lang>
+		m_legacy_lang = re.fullmatch(r"/(us|mexico|latam)(?:/index\.html)?/?", clean_path)
+		if m_legacy_lang:
+			return self._redirect_permanent(f"/blog/{m_legacy_lang.group(1)}")
 
-		# 2) Flat blog URL: /blog/<slug>
+		# Legacy: redirect /<lang>/<category>[/index.html] -> /blog/<lang>/<category>
+		m_legacy_lang_cat = re.fullmatch(r"/(us|mexico|latam)/([^/]+)(?:/index\.html)?/?", clean_path)
+		if m_legacy_lang_cat:
+			lang, category = m_legacy_lang_cat.group(1), m_legacy_lang_cat.group(2)
+			candidate = os.path.join(BLOG_ROOT, lang, category, "index.html")
+			if os.path.isfile(candidate):
+				return self._redirect_permanent(f"/blog/{lang}/{category}")
+
+		# Resolve /blog/<category> to the first language that has it (preferring us, then mexico, then latam)
+		m_possible_category = re.fullmatch(r"/blog/([^/]+)", clean_path)
+		if m_possible_category:
+			name = m_possible_category.group(1)
+			for lang in LANG_CODES:
+				candidate = os.path.join(BLOG_ROOT, lang, name, "index.html")
+				if os.path.isfile(candidate):
+					return self._redirect_permanent(f"/blog/{lang}/{name}")
+			# If not a category, we will try as a post slug below
+
+		# 2) Preferred nested blog URL: /blog/<lang>/<category>/<slug>
+		m_nested = re.fullmatch(r"/blog/([^/]+)/([^/]+)/([^/]+)", clean_path)
+		if m_nested:
+			lang, category, slug = m_nested.group(1), m_nested.group(2), m_nested.group(3)
+			meta = SLUG_META.get(slug)
+			if meta and meta.language == lang and meta.category == category and os.path.isfile(meta.abs_index_path):
+				return self._serve_absolute(meta.abs_index_path)
+			if meta and os.path.isfile(meta.abs_index_path):
+				canonical = self._canonical_slug_url(meta)
+				return self._redirect_permanent(canonical)
+			return self._send_404()
+
+		# 2b) Old flat blog URL: /blog/<slug> -> redirect to nested if known
 		m_flat = re.fullmatch(r"/blog/([^/]+)", clean_path)
 		if m_flat:
 			slug = m_flat.group(1)
-			abs_index = SLUG_MAP.get(slug)
-			if abs_index and os.path.isfile(abs_index):
-				return self._serve_absolute(abs_index)
+			meta = SLUG_META.get(slug)
+			if meta and os.path.isfile(meta.abs_index_path):
+				return self._redirect_permanent(self._canonical_slug_url(meta))
 			return self._send_404()
 
-		# 3) Redirect /blog/(.../)?<slug>/index.html -> /blog/<slug>
+		# 3) Redirect /blog/(.../)?<slug>/index.html -> nested
 		m_deep_idx = re.fullmatch(r"/blog/(?:.*/)?([^/]+)/index\.html", clean_path)
 		if m_deep_idx:
 			slug = m_deep_idx.group(1)
-			return self._redirect_permanent(f"/blog/{slug}")
+			meta = SLUG_META.get(slug)
+			if meta:
+				return self._redirect_permanent(self._canonical_slug_url(meta))
 
-		# 4) Redirect /blog/(.../)?<slug>/ -> /blog/<slug> when the slug exists
+		# 4) Redirect /blog/(.../)?<slug>/ -> nested when the slug exists
 		m_deep_dir = re.fullmatch(r"/blog/(?:.*/)?([^/]+)/", clean_path)
 		if m_deep_dir:
 			slug = m_deep_dir.group(1)
-			candidate = SLUG_MAP.get(slug)
-			if candidate and os.path.isfile(candidate):
-				return self._redirect_permanent(f"/blog/{slug}")
+			meta = SLUG_META.get(slug)
+			if meta and os.path.isfile(meta.abs_index_path):
+				return self._redirect_permanent(self._canonical_slug_url(meta))
 
-		# 5) Non-/blog deep paths like /section/.../slug/index.html -> redirect
+		# 5) Non-/blog deep paths like /section/.../slug/index.html -> redirect to nested
 		m_non_blog_idx = re.fullmatch(r"/(?:" + "|".join(map(re.escape, SECTION_PREFIXES)) + r")/.*/([^/]+)/index\.html", clean_path)
 		if m_non_blog_idx:
 			slug = m_non_blog_idx.group(1)
-			return self._redirect_permanent(f"/blog/{slug}")
+			meta = SLUG_META.get(slug)
+			if meta:
+				return self._redirect_permanent(self._canonical_slug_url(meta))
 
 		# 6) Non-/blog deep paths ending with / -> redirect if slug exists
 		m_non_blog_dir = re.fullmatch(r"/(?:" + "|".join(map(re.escape, SECTION_PREFIXES)) + r")/.*/([^/]+)/", clean_path)
 		if m_non_blog_dir:
 			slug = m_non_blog_dir.group(1)
-			candidate = SLUG_MAP.get(slug)
-			if candidate and os.path.isfile(candidate):
-				return self._redirect_permanent(f"/blog/{slug}")
+			meta = SLUG_META.get(slug)
+			if meta and os.path.isfile(meta.abs_index_path):
+				return self._redirect_permanent(self._canonical_slug_url(meta))
 
 		# 7) Generic catch-all for any deep path ending in /index.html (outside /blog)
 		if clean_path.startswith("/blog/") is False:
 			m_any_idx = re.fullmatch(r"/.*/([^/]+)/index\.html", clean_path)
 			if m_any_idx:
 				slug = m_any_idx.group(1)
-				return self._redirect_permanent(f"/blog/{slug}")
+				meta = SLUG_META.get(slug)
+				if meta:
+					return self._redirect_permanent(self._canonical_slug_url(meta))
 			m_any_dir = re.fullmatch(r"/.*/([^/]+)/", clean_path)
 			if m_any_dir:
 				slug = m_any_dir.group(1)
-				candidate = SLUG_MAP.get(slug)
-				if candidate and os.path.isfile(candidate):
-					return self._redirect_permanent(f"/blog/{slug}")
+				meta = SLUG_META.get(slug)
+				if meta and os.path.isfile(meta.abs_index_path):
+					return self._redirect_permanent(self._canonical_slug_url(meta))
 
 		# 8) Favicon fallthrough: try blog/favicon.ico if root missing
 		if clean_path == "/favicon.ico":
@@ -213,6 +313,12 @@ class BlogRequestHandler(http.server.SimpleHTTPRequestHandler):
 
 		# 9) Anything else: fall back to default static file handling
 		return super().do_GET()
+
+	def _canonical_slug_url(self, meta: SlugMeta) -> str:
+		# If language/category known, use nested form; otherwise fallback to flat
+		if meta.language and meta.category:
+			return f"/blog/{meta.language}/{meta.category}/{meta.slug}"
+		return f"/blog/{meta.slug}"
 
 	def _serve_absolute(self, absolute_path: str) -> None:
 		if not os.path.isfile(absolute_path):
