@@ -12,18 +12,16 @@ export async function onRequest(context) {
 		return Response.redirect(url.toString(), 301);
 	}
 
-	// 2) For no-slash, fetch the slash version internally and stream it back
+	// 2) For no-slash, fetch the slash version directly from static assets to avoid middleware recursion
 	const slashUrl = new URL(request.url);
 	slashUrl.pathname = pathname + "/";
 
-	const resp = await fetch(slashUrl.toString(), {
-		headers: { "User-Agent": "Mozilla/5.0 (Cloudflare Pages Function)" },
-		redirect: "manual",
-	});
+	const assetRequest = new Request(slashUrl.toString(), request);
+	const assetResp = await context.env.ASSETS.fetch(assetRequest);
 
-	if (resp.ok) {
-		const headers = new Headers(resp.headers);
-		return new Response(resp.body, { status: resp.status, headers });
+	if (assetResp && assetResp.ok) {
+		const headers = new Headers(assetResp.headers);
+		return new Response(assetResp.body, { status: assetResp.status, headers });
 	}
 
 	return next();
