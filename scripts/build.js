@@ -88,7 +88,11 @@ async function walkAndProcess(sourceDir, baseRelative = '') {
       // Only include root index.html and everything under blog/
       const isRootIndex = rel === 'index.html';
       const isUnderBlog = rel.startsWith('blog' + path.sep);
-      if (isRootIndex || isUnderBlog) {
+      // Skip mirrored API/data artifacts to reduce file count for Cloudflare Pages
+      const isJson = rel.toLowerCase().endsWith('.json');
+      const isMap = rel.toLowerCase().endsWith('.map');
+      const isWpJson = rel.includes(`${path.sep}wp-json${path.sep}`) || rel.includes('/wp-json/');
+      if ((isRootIndex || isUnderBlog) && !isJson && !isMap && !isWpJson) {
         await processFile(abs, rel);
       }
     }
