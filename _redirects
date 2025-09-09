@@ -1,1 +1,2 @@
-/blog/us/*/ /blog/us/:splat 301!
+/blog/us/:splat/   /blog/us/:splat   301!
+/blog/us/          /blog/us          301!
