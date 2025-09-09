@@ -104,6 +104,13 @@ async function main() {
   await ensureCleanDistDirectory();
   console.log('Minifying and copying assets...');
   await walkAndProcess(sourceRoot);
+  // Ensure redirects file is copied to dist root for Cloudflare Pages
+  const redirectsSrc = path.join(projectRoot, '_redirects');
+  const redirectsDst = path.join(distRoot, '_redirects');
+  if (await fse.pathExists(redirectsSrc)) {
+    await fse.copy(redirectsSrc, redirectsDst);
+    console.log('Copied _redirects to dist');
+  }
   console.log('Build complete. Output in', distRoot);
 }
 
