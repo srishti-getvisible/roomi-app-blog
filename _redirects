@@ -1,1 +1,3 @@
-/* https://roomiapp.com/blog/:splat 301
+/blog/* https://roomiapp.com/blog/:splat 301!
+/ https://roomiapp.com/blog/ 301!
+/* https://roomiapp.com/blog/:splat 301!
