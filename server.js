@@ -21,10 +21,9 @@ app.use('/blog', serveStatic(blogDir, {
   }
 }));
 
-// Serve the root index.html without redirecting to /blog
-const rootIndexPath = path.join(projectRoot, isProduction ? 'dist/index.html' : 'index.html');
+// Redirect root to /blog
 app.get('/', (req, res) => {
-  res.sendFile(rootIndexPath);
+  res.redirect('/blog');
 });
 
 // Handle 404
@@ -34,7 +33,6 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server is running on http://localhost:${PORT}/blog`);
   console.log(`Serving /blog from: ${blogDir}`);
-  console.log(`Serving / from: ${rootIndexPath}`);
 });
