@@ -1,0 +1,6 @@
+name = "roomi-app-blog"
+
+[pages]
+  build_output_dir = "dist"
+
+
