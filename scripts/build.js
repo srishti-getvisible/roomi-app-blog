@@ -108,7 +108,8 @@ async function main() {
   const redirectsSrc = path.join(projectRoot, '_redirects');
   const redirectsDst = path.join(distRoot, '_redirects');
   if (await fse.pathExists(redirectsSrc)) {
-    await fse.copy(redirectsSrc, redirectsDst);
+    // Force overwrite to ensure latest redirects are used
+    await fse.copy(redirectsSrc, redirectsDst, { overwrite: true, errorOnExist: false });
     console.log('Copied _redirects to dist');
   }
   console.log('Build complete. Output in', distRoot);

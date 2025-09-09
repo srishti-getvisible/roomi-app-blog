@@ -5,9 +5,12 @@ const serveStatic = require('serve-static');
 const app = express();
 const PORT = process.env.PORT || 8000;
 
+// Determine roots for serving content
+const isProduction = process.env.NODE_ENV === 'production';
+const projectRoot = __dirname;
 // Serve static files from the blog directory under /blog path
 // In production, serve from dist/blog if it exists
-const blogDir = path.join(__dirname, process.env.NODE_ENV === 'production' ? '/dist/blog' : '/blog');
+const blogDir = path.join(projectRoot, isProduction ? 'dist/blog' : 'blog');
 app.use('/blog', serveStatic(blogDir, {
   index: ['index.html', 'index.htm'],
   setHeaders: (res, filePath) => {
@@ -18,9 +21,10 @@ app.use('/blog', serveStatic(blogDir, {
   }
 }));
 
-// Redirect root to /blog
+// Serve the root index.html without redirecting to /blog
+const rootIndexPath = path.join(projectRoot, isProduction ? 'dist/index.html' : 'index.html');
 app.get('/', (req, res) => {
-  res.redirect('/blog');
+  res.sendFile(rootIndexPath);
 });
 
 // Handle 404
@@ -30,6 +34,7 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}/blog`);
-  console.log(`Serving files from: ${blogDir}`);
+  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Serving /blog from: ${blogDir}`);
+  console.log(`Serving / from: ${rootIndexPath}`);
 });
